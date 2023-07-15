@@ -21,6 +21,7 @@ declare -A podreplicas
 
 # usage
 usage() {
+    echo ">>> Example : ./pv-migrate.sh presync prd mt-prd-bookinfo bookinfo-pvc"
     echo ">>> Example : ./pv-migrate.sh migrate prd mt-prd-bookinfo bookinfo-pvc"
     echo ">>> First argument supplied is presync or migrate"
     echo ">>> Second argument supplied is environment name"
@@ -76,7 +77,6 @@ backup_dir() {
 
 # create a new pvc with retain policy and immediate in the ns
 create_new_pvc() {
-    
     DESTPVC_PRESENCE=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${DESTPVC} --no-headers=true | awk '{print $1}')
     if [[ ${SOURCESCNAME} == "gold" ]]; then
       NEWSCNAME="platinum"

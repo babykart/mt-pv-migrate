@@ -52,6 +52,7 @@ No argument supplied.
 
 ```shell
 No argument supplied.
+>>> Example : ./pv-migrate.sh presync prd mt-prd-bookinfo bookinfo-pvc
 >>> Example : ./pv-migrate.sh migrate prd mt-prd-bookinfo bookinfo-pvc
 >>> First argument supplied is presync or migrate
 >>> Second argument supplied is environment name
