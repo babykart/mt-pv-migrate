@@ -83,7 +83,7 @@ restore_dir() {
 # First you need to scale down your application that use the pvc
 scale_down() {
     echo ">>> Building Pod list linked to PVC ${SOURCEPVC}"
-    PODLIST=$(${KUBECTL_BIN} get pods --all-namespaces -o=json | ${JQ_BIN} --arg sourcepvc ${SOURCEPVC} -c '.items[] | {name: .metadata.name, namespace: .metadata.namespace, claimName: .spec |  select( has ("volumes") ).volumes[] | select( has ("persistentVolumeClaim") ).persistentVolumeClaim | select(.claimName == $sourcepvc) }')
+    PODLIST=$(${KUBECTL_BIN} get pods -n ${NAMESPACE} -o=json | ${JQ_BIN} --arg sourcepvc ${SOURCEPVC} -c '.items[] | {name: .metadata.name, namespace: .metadata.namespace, claimName: .spec |  select( has ("volumes") ).volumes[] | select( has ("persistentVolumeClaim") ).persistentVolumeClaim | select(.claimName == $sourcepvc) }')
     local i
     for i in $(echo ${PODLIST} | ${JQ_BIN} -r '.name'); do
       TYPE=$(${KUBECTL_BIN} get po $i -n ${NAMESPACE} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].kind' | tr ‘[A-Z]’ ‘[a-z]’)
@@ -96,9 +96,9 @@ scale_down() {
       podreplicas+=( ["${TYPE}/${TYPENAME}"]=${REPLICAS} )
       echo ">>> Scaling down ${TYPE}/${TYPENAME} ..."
       ${KUBECTL_BIN} scale ${TYPE} ${TYPENAME} -n ${NAMESPACE} --replicas=0 || die "Scale down failed"
-      until [[ $(${KUBECTL_BIN} get ${TYPE} ${TYPENAME} -n ${NAMESPACE} --no-headers | awk '{print $2}') == "0/0" ]]; do
-        echo ">>> Waiting 1 sec for the ${TYPENAME} ${TYPE} to be scaled down"
-        sleep 1
+      while [[ $(${KUBECTL_BIN} get po -n ${NAMESPACE} ${i} --no-headers) ]]; do
+        echo ">>> Waiting 3 sec for the ${TYPENAME} ${TYPE} to be scaled down"
+        sleep 3
       done
     done
 }

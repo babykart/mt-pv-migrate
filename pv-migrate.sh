@@ -11,6 +11,7 @@ K8S_ENV="$2"
 NAMESPACE="$3"
 SOURCEPVC="$4"
 DESTPVC="${SOURCEPVC}-pvmigrate"
+NEWSCNAME="platinum"
 DATE=$(date '+%Y-%m-%d-%H-%M')
 SCRIPT_DIR=$(cd -P -- "$(dirname -- "$(dirname $0)")" && pwd -P)
 GIT_BIN="${GIT_BIN:-git}"
@@ -78,11 +79,6 @@ backup_dir() {
 # create a new pvc with retain policy and immediate in the ns
 create_new_pvc() {
     DESTPVC_PRESENCE=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${DESTPVC} --no-headers=true | awk '{print $1}')
-    if [[ ${SOURCESCNAME} == "gold" ]]; then
-      NEWSCNAME="platinum"
-    else
-      NEWSCNAME="not-production-environment"
-    fi
 
     echo ">>> The New Storage class is ${NEWSCNAME}"
 
@@ -119,9 +115,9 @@ scale_down() {
       podreplicas+=( ["${TYPE}/${TYPENAME}"]=${REPLICAS} )
       echo ">>> Scaling down ${TYPE}/${TYPENAME} ..."
       ${KUBECTL_BIN} scale ${TYPE} ${TYPENAME} -n ${NAMESPACE} --replicas=0 || die "Scale down failed"
-      until [[ $(${KUBECTL_BIN} get ${TYPE} ${TYPENAME} -n ${NAMESPACE} --no-headers | awk '{print $2}') == "0/0" ]]; do
-	echo ">>> Waiting 1 sec for the ${TYPENAME} ${TYPE} to be scaled down"
-        sleep 1
+      while [[ $(${KUBECTL_BIN} get po -n ${NAMESPACE} ${i} --no-headers) ]]; do
+	echo ">>> Waiting 3 sec for the ${TYPENAME} ${TYPE} to be scaled down"
+        sleep 3
       done
     done
 }
