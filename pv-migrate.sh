@@ -10,8 +10,8 @@ MODE="$1"
 K8S_ENV="$2"
 NAMESPACE="$3"
 SOURCEPVC="$4"
+NEWSCNAME="$5"
 DESTPVC="${SOURCEPVC}-pvmigrate"
-NEWSCNAME="platinum"
 DATE=$(date '+%Y-%m-%d-%H-%M')
 SCRIPT_DIR=$(cd -P -- "$(dirname -- "$(dirname $0)")" && pwd -P)
 GIT_BIN="${GIT_BIN:-git}"
@@ -22,12 +22,12 @@ declare -A podreplicas
 
 # usage
 usage() {
-    echo ">>> Example : ./pv-migrate.sh presync prd mt-prd-bookinfo bookinfo-pvc"
-    echo ">>> Example : ./pv-migrate.sh migrate prd mt-prd-bookinfo bookinfo-pvc"
+    echo ">>> Example : ./pv-migrate.sh migrate prd mt-prd-bookinfo bookinfo-pvc gold-mcc"
     echo ">>> First argument supplied is presync or migrate"
     echo ">>> Second argument supplied is environment name"
     echo ">>> Third argument supplied is namespace name"
     echo ">>> Fourth argument supplied is source PVC name"
+    echo ">>> Fifth argument supplied is new StorageClass name"
 }
 
 if [ $# -eq 0 ]; then
@@ -47,6 +47,9 @@ else
     elif [ -z "$4" ]; then
         echo "Fourth argument supplied is invalid, need Source PVC name"
         exit 1
+    elif [ -z "$5" ]; then
+        echo "Fifth argument supplied is invalid, need New StorageClass name"
+        exit 1
     fi
 fi
 
@@ -58,6 +61,29 @@ SOURCESCNAME=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${SOURCEPVC} -ojson | ${JQ
 die() {
     echo $1
     exit 1
+}
+
+# Asking for user to continue or not
+pause_scale() {
+    UPORDOWN=${1}
+    while true; do
+      read -p "Scale ${UPORDOWN} your application and press y/Y to continue (Y/N): " confirm
+      case ${confirm} in
+      y|Y)
+        return 0
+        ;;
+
+      n|N)
+        die "Operation interrupted by user"
+        ;;
+
+      *)
+        echo "Wrong argument, please use yY or nN"
+	continue
+        ;;
+      esac
+      break
+    done
 }
 
 # Check if required binaries are in the PATH
@@ -122,21 +148,33 @@ scale_down() {
     done
 }
 
+get_pod_location() {
+    echo ">>> Generating the POD list linked to PVC ${SOURCEPVC}"
+    PODLIST=$(${KUBECTL_BIN} get pods -n ${NAMESPACE} -o=json | ${JQ_BIN} --arg sourcepvc ${SOURCEPVC} -c '.items[] | {name: .metadata.name, namespace: .metadata.namespace, claimName: .spec |  select( has ("volumes") ).volumes[] | select( has ("persistentVolumeClaim") ).persistentVolumeClaim | select(.claimName == $sourcepvc), nodeName: .spec.nodeName'})
+}
+
 # Now we can use the pv-migrate to copy the data
 pv_migrate() {
+    i=$(echo ${PODLIST} | ${JQ_BIN} -r '.nodeName' | uniq)
+    [[ -z ${i} ]] && die "Unable to determine the nodeName of the Pod"
+    TOPOLOGY=$(${KUBECTL_BIN} get no ${i} -ojson | jq -r '.metadata.labels' | grep -we '"topology.kubernetes.io/zone": ".*"' | sed -e 's/,//g')
+    MKVALUETMP=$(mktemp)
+    cat ${SCRIPT_DIR}/templates/values.yaml | sed -e 's#    TOREPLACE#  '"${TOPOLOGY}"'#g' > ${MKVALUETMP}
     case ${MODE} in
       "presync")
-      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s svc --ignore-mounted || die "SVC PVC migration failed"
+      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s svc --ignore-mounted --helm-values ${MKVALUETMP} || die "SVC PVC migration failed"
       ;;
 
       "migrate")
-      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s mnt2 --ignore-mounted || die "MNT2 PVC migration failed"
+      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s mnt2 --ignore-mounted --helm-values ${MKVALUETMP} || die "MNT2 PVC migration failed"
       ;;
 
       "*")
       die "No migration strategy defined"
       ;;
     esac
+    rm -f ${MKVALUETMP}
+    unset i
 }
 
 # patch PV with Reclaim Policy Retain
@@ -225,6 +263,7 @@ main_presync() {
     bin_check
     backup_dir
     create_new_pvc
+    get_pod_location
     pv_migrate
 }
 
@@ -232,7 +271,8 @@ main_migrate() {
     bin_check
     backup_dir
     create_new_pvc
-    scale_down
+    get_pod_location
+    pause_scale down
     pv_migrate
     patch_pv
     pv_id
@@ -240,7 +280,7 @@ main_migrate() {
     free_source_pv
     recreate_source_pvc
     pv_dest_claim_patch
-    scale_up
+    pause_scale up
     pv_dest_policy_patch
     git_push
 }
