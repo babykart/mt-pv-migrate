@@ -52,12 +52,13 @@ No argument supplied.
 
 ```shell
 No argument supplied.
->>> Example : ./pv-migrate.sh presync prd mt-prd-bookinfo bookinfo-pvc
->>> Example : ./pv-migrate.sh migrate prd mt-prd-bookinfo bookinfo-pvc
+>>> Example : ./pv-migrate.sh presync prd mt-prd-bookinfo bookinfo-pvc gold-mcc
+>>> Example : ./pv-migrate.sh migrate prd mt-prd-bookinfo bookinfo-pvc gold-mcc
 >>> First argument supplied is presync or migrate
 >>> Second argument supplied is environment name
 >>> Third argument supplied is namespace name
 >>> Fourth argument supplied is source PVC name
+>>> Fifth argument supplied is new StorageClass name
 ```
 
 ## pv-restore.sh
