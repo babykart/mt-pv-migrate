@@ -57,6 +57,29 @@ die() {
     exit 1
 }
 
+# Asking for user to continue or not
+pause_scale() {
+    UPORDOWN=${1}
+    while true; do
+      read -p "Scale ${UPORDOWN} your application and press y/Y to continue (Y/N): " confirm
+      case ${confirm} in
+      y|Y)
+        return 0
+        ;;
+
+      n|N)
+        die "Operation interrupted by user"
+        ;;
+
+      *)
+        echo "Wrong argument, please use yY or nN"
+        continue
+        ;;
+      esac
+      break
+    done
+}
+
 # Check if required binaries are in the PATH
 bin_check() {
     command -v ${GIT_BIN} >/dev/null 2>&1 || die "The git binary is not in your PATH"
@@ -162,11 +185,11 @@ main() {
     bin_check
     sc_check
     restore_dir
-    scale_down
+    pause_scale down
     delete_migrated_pvc
     restore_source_pvc
     patch_pv
-    scale_up
+    pause_scale up
     pv_policy_patch
     git_push
 }
