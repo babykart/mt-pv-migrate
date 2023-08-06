@@ -28,29 +28,6 @@ usage() {
     echo ">>> Fifth argument supplied is source StorageClass name"
 }
 
-if [ $# -eq 0 ]; then
-    echo "No argument supplied."
-    usage
-    exit 1
-else
-    if  [ -z "$1" ]; then
-        echo "First argument supplied is invalid, need environment name"
-        exit 1
-    elif [ -z "$2" ]; then
-        echo "Second argument supplied is invalid, need namespace name"
-        exit 1
-    elif [ -z "$3" ]; then
-        echo "Third argument supplied is invalid, need Source PVC name"
-        exit 1
-    elif [ -z "$4" ]; then
-        echo "Fourth argument supplied is invalid, need Source PV name"
-        exit 1
-    elif [ -z "$5" ]; then
-        echo "Fifth argument supplied is invalid, need Source StorageClass name"
-        exit 1
-    fi
-fi
-
 # Die function to exit 1 for any error
 die() {
     echo $1
@@ -103,29 +80,6 @@ restore_dir() {
     ${KUBECTL_BIN} get pvc ${SOURCEPVC} -n ${NAMESPACE} -oyaml | kubectl-neat > ./${SOURCEPVC}-restore.yaml
 }
 
-# First you need to scale down your application that use the pvc
-scale_down() {
-    echo ">>> Building Pod list linked to PVC ${SOURCEPVC}"
-    PODLIST=$(${KUBECTL_BIN} get pods -n ${NAMESPACE} -o=json | ${JQ_BIN} --arg sourcepvc ${SOURCEPVC} -c '.items[] | {name: .metadata.name, namespace: .metadata.namespace, claimName: .spec |  select( has ("volumes") ).volumes[] | select( has ("persistentVolumeClaim") ).persistentVolumeClaim | select(.claimName == $sourcepvc) }')
-    local i
-    for i in $(echo ${PODLIST} | ${JQ_BIN} -r '.name'); do
-      TYPE=$(${KUBECTL_BIN} get po $i -n ${NAMESPACE} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].kind' | tr ‘[A-Z]’ ‘[a-z]’)
-      TYPENAME=$(${KUBECTL_BIN} get po $i -n ${NAMESPACE} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].name')
-      if [[ ${TYPE} == "replicaset" ]]; then
-        TYPE=$(${KUBECTL_BIN} get replicaset -n ${NAMESPACE} ${TYPENAME} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].kind' | tr ‘[A-Z]’ ‘[a-z]’)
-        TYPENAME=$(${KUBECTL_BIN} get replicaset -n ${NAMESPACE} ${TYPENAME} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].name')
-      fi
-      REPLICAS=$(${KUBECTL_BIN} get ${TYPE} ${TYPENAME} -n ${NAMESPACE} -ojson | ${JQ_BIN} -r '.spec.replicas' ) #comment récupérer le replica par déploimenet ?
-      podreplicas+=( ["${TYPE}/${TYPENAME}"]=${REPLICAS} )
-      echo ">>> Scaling down ${TYPE}/${TYPENAME} ..."
-      ${KUBECTL_BIN} scale ${TYPE} ${TYPENAME} -n ${NAMESPACE} --replicas=0 || die "Scale down failed"
-      while [[ $(${KUBECTL_BIN} get po -n ${NAMESPACE} ${i} --no-headers) ]]; do
-        echo ">>> Waiting 3 sec for the ${TYPENAME} ${TYPE} to be scaled down"
-        sleep 3
-      done
-    done
-}
-
 # Delete Migrated PVC
 delete_migrated_pvc() {
     echo ">>> Deleting Migrated PVC ${SOURCEPVC} and its bounded PV"
@@ -152,20 +106,6 @@ patch_pv() {
     ${KUBECTL_BIN} patch pv ${SOURCEPV} -p '{"spec":{"storageClassName":"'${SOURCESC}'"}}' || die "Source PV patch failed"
 }
 
-
-# scale up the replicasets
-scale_up() {
-    for type in ${!podreplicas[@]}; do
-      echo ">>> Scaling up ${type} with ${podreplicas[${type}]} replicas"
-      ${KUBECTL_BIN} scale ${type} -n ${NAMESPACE} --replicas=${podreplicas[${type}]} || die "Scale up failed"
-      until [[ $(${KUBECTL_BIN} get ${type} -n ${NAMESPACE} --no-headers | awk '{print $2}') == "${podreplicas[${type}]}/${podreplicas[${type}]}" ]]; do
-        echo ">>> Waiting 10 sec for the ${type} to be scaled up"
-        sleep 10
-      done
-    done
-    unset podreplicas
-}
-
 # Patching PV to Delete Reclaim Policy
 pv_policy_patch() {
     echo ">>> Patching Source PV ${SOURCEPV} with Delete Reclaim Policy"
@@ -182,6 +122,28 @@ git_push() {
 }
 
 main() {
+    if [ $# -eq 0 ]; then
+        echo "No argument supplied."
+        usage
+        exit 1
+    else
+        if  [ -z "$1" ]; then
+            echo "First argument supplied is invalid, need environment name"
+            exit 1
+        elif [ -z "$2" ]; then
+            echo "Second argument supplied is invalid, need namespace name"
+            exit 1
+        elif [ -z "$3" ]; then
+            echo "Third argument supplied is invalid, need Source PVC name"
+            exit 1
+        elif [ -z "$4" ]; then
+            echo "Fourth argument supplied is invalid, need Source PV name"
+            exit 1
+        elif [ -z "$5" ]; then
+            echo "Fifth argument supplied is invalid, need Source StorageClass name"
+            exit 1
+        fi
+    fi
     bin_check
     sc_check
     restore_dir
@@ -194,4 +156,4 @@ main() {
     git_push
 }
 
-main
+main "${@}"
