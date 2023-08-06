@@ -30,33 +30,6 @@ usage() {
     echo ">>> Fifth argument supplied is new StorageClass name"
 }
 
-if [ $# -eq 0 ]; then
-    echo "No argument supplied."
-    usage
-    exit 1
-else
-    if  [ -z "$1" ]; then
-        echo "First argument supplied is invalid, need presync or migrate"
-        exit 1
-    elif [ -z "$2" ]; then
-        echo "Second argument supplied is invalid, need namespace name"
-        exit 1
-    elif [ -z "$3" ]; then
-        echo "Third argument supplied is invalid, need namespace name"
-        exit 1
-    elif [ -z "$4" ]; then
-        echo "Fourth argument supplied is invalid, need Source PVC name"
-        exit 1
-    elif [ -z "$5" ]; then
-        echo "Fifth argument supplied is invalid, need New StorageClass name"
-        exit 1
-    fi
-fi
-
-# fetch old pvc storage and storage class name
-STORAGESIZE=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${SOURCEPVC} -ojson | ${JQ_BIN} -r '.spec.resources.requests.storage')
-SOURCESCNAME=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${SOURCEPVC} -ojson | ${JQ_BIN} -r '.spec.storageClassName')
-
 # Die function to exit 1 for any error
 die() {
     echo $1
@@ -125,29 +98,6 @@ create_new_pvc() {
     fi
 }
 
-# First you need to scale down your application that use the pvc
-scale_down() {
-    echo ">>> Generating the POD list linked to PVC ${SOURCEPVC}"
-    PODLIST=$(${KUBECTL_BIN} get pods --all-namespaces -o=json | ${JQ_BIN} --arg sourcepvc ${SOURCEPVC} -c '.items[] | {name: .metadata.name, namespace: .metadata.namespace, claimName: .spec |  select( has ("volumes") ).volumes[] | select( has ("persistentVolumeClaim") ).persistentVolumeClaim | select(.claimName == $sourcepvc) }')
-    local i
-    for i in $(echo ${PODLIST} | ${JQ_BIN} -r '.name'); do
-      TYPE=$(${KUBECTL_BIN} get po $i -n ${NAMESPACE} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].kind' | tr ‘[A-Z]’ ‘[a-z]’)
-      TYPENAME=$(${KUBECTL_BIN} get po $i -n ${NAMESPACE} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].name')
-      if [[ ${TYPE} == "replicaset" ]]; then
-        TYPE=$(${KUBECTL_BIN} get replicaset -n ${NAMESPACE} ${TYPENAME} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].kind' | tr ‘[A-Z]’ ‘[a-z]’)
-        TYPENAME=$(${KUBECTL_BIN} get replicaset -n ${NAMESPACE} ${TYPENAME} -ojson | ${JQ_BIN} -r '.metadata.ownerReferences[].name')
-      fi
-      REPLICAS=$(${KUBECTL_BIN} get ${TYPE} ${TYPENAME} -n ${NAMESPACE} -ojson | ${JQ_BIN} -r '.spec.replicas' ) #comment récupérer le replica par déploimenet ?
-      podreplicas+=( ["${TYPE}/${TYPENAME}"]=${REPLICAS} )
-      echo ">>> Scaling down ${TYPE}/${TYPENAME} ..."
-      ${KUBECTL_BIN} scale ${TYPE} ${TYPENAME} -n ${NAMESPACE} --replicas=0 || die "Scale down failed"
-      while [[ $(${KUBECTL_BIN} get po -n ${NAMESPACE} ${i} --no-headers) ]]; do
-	echo ">>> Waiting 3 sec for the ${TYPENAME} ${TYPE} to be scaled down"
-        sleep 3
-      done
-    done
-}
-
 get_pod_location() {
     echo ">>> Generating the POD list linked to PVC ${SOURCEPVC}"
     PODLIST=$(${KUBECTL_BIN} get pods -n ${NAMESPACE} -o=json | ${JQ_BIN} --arg sourcepvc ${SOURCEPVC} -c '.items[] | {name: .metadata.name, namespace: .metadata.namespace, claimName: .spec |  select( has ("volumes") ).volumes[] | select( has ("persistentVolumeClaim") ).persistentVolumeClaim | select(.claimName == $sourcepvc), nodeName: .spec.nodeName'})
@@ -207,6 +157,7 @@ delete_dest_and_source_pvc() {
 
 # free the PV Source from PVC
 free_source_pv() {
+    SOURCESCNAME=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${SOURCEPVC} -ojson | ${JQ_BIN} -r '.spec.storageClassName')
     echo ">>> Patching Generated PV ${SOURCEPVID} to be freed from its PVC"
     ${KUBECTL_BIN} patch pv ${SOURCEPVID} --type=json -p='[{"op": "remove", "path": "/spec/claimRef"}]'
     ${KUBECTL_BIN} patch pv ${SOURCEPVID} -p '{"spec":{"storageClassName":"'${DESTPVID}'-backup-'${SOURCESCNAME}'"}}'
@@ -231,19 +182,6 @@ pv_dest_claim_patch() {
     ${KUBECTL_BIN} patch pv ${DESTPVID} --type=json -p='[{"op": "remove", "path": "/spec/claimRef/uid"}]' || die "Destination PV ClaimReF UID patch Failed"
 }
 
-# scale up the replicaset
-scale_up() {
-    for type in ${!podreplicas[@]}; do
-      echo ">>> Scaling up ${type} with ${podreplicas[${type}]} replicas"
-      ${KUBECTL_BIN} scale ${type} -n ${NAMESPACE} --replicas=${podreplicas[${type}]} || die "Scale up failed"
-      until [[ $(${KUBECTL_BIN} get ${type} -n ${NAMESPACE} --no-headers | awk '{print $2}') == "${podreplicas[${type}]}/${podreplicas[${type}]}" ]]; do
-        echo ">>> Waiting 10 sec for the ${type} to be scaled up"
-        sleep 10
-      done
-    done
-    unset podreplicas
-}
-
 pv_dest_policy_patch() {
     echo ">>> Patching migrated PV ${DESTPVID} with Delete Reclaim Policy"
     ${KUBECTL_BIN} patch pv ${DESTPVID} -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}' || die "Destination PV ReclaimPolicy patch Failed"
@@ -257,7 +195,6 @@ git_push() {
     ${GIT_BIN} commit -a -m "PVC ${SOURCEPVC} migration at ${DATE}"
     ${GIT_BIN} push
 }
-
 
 main_presync() {
     bin_check
@@ -284,6 +221,29 @@ main_migrate() {
     pv_dest_policy_patch
     git_push
 }
+
+if [ $# -eq 0 ]; then
+    echo "No argument supplied."
+    usage
+    exit 1
+else
+    if  [ -z "$1" ]; then
+        echo "First argument supplied is invalid, need presync or migrate"
+        exit 1
+    elif [ -z "$2" ]; then
+        echo "Second argument supplied is invalid, need namespace name"
+        exit 1
+    elif [ -z "$3" ]; then
+        echo "Third argument supplied is invalid, need namespace name"
+        exit 1
+    elif [ -z "$4" ]; then
+        echo "Fourth argument supplied is invalid, need Source PVC name"
+        exit 1
+    elif [ -z "$5" ]; then
+        echo "Fifth argument supplied is invalid, need New StorageClass name"
+        exit 1
+    fi
+fi
 
 case ${MODE} in
     "migrate")
