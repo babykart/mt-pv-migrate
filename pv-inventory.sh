@@ -21,20 +21,6 @@ usage() {
     echo ">>> Second argument supplied is namespace name"
 }
 
-if [ $# -eq 0 ]; then
-    echo "No argument supplied."
-    usage
-    exit 1
-else
-    if  [ -z "$1" ]; then
-        echo "First argument supplied is invalid, need environment name"
-        exit 1
-    elif [ -z "$2" ]; then
-        echo "Second argument supplied is invalid, need namespace name"
-        exit 1
-    fi
-fi
-
 # Die function to exit 1 for any error
 die() {
     echo $1
@@ -79,10 +65,23 @@ git_push() {
 }
 
 main() {
+    if [ $# -eq 0 ]; then
+        echo "No argument supplied."
+        usage
+        exit 1
+    else
+        if  [ -z "$1" ]; then
+            echo "First argument supplied is invalid, need environment name"
+            exit 1
+        elif [ -z "$2" ]; then
+            echo "Second argument supplied is invalid, need namespace name"
+            exit 1
+        fi
+    fi
     bin_check
     inventory_dir
     inventory
     git_push
 }
 
-main
+main "${@}"
