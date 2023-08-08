@@ -119,7 +119,7 @@ pv_migrate() {
       ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s mnt2 --ignore-mounted --helm-values ${MKVALUETMP} || die "MNT2 PVC migration failed"
       ;;
 
-      "*")
+      *)
       die "No migration strategy defined"
       ;;
     esac
@@ -254,7 +254,7 @@ case ${MODE} in
       main_presync
       ;;
 
-    "*")
+    *)
       die "You must specify migrate or presync"
       ;;
 esac
