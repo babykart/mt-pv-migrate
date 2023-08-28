@@ -22,6 +22,7 @@ declare -A podreplicas
 
 # usage
 usage() {
+    echo ">>> Example : ./pv-migrate.sh presync prd mt-prd-bookinfo bookinfo-pvc gold-mcc"
     echo ">>> Example : ./pv-migrate.sh migrate prd mt-prd-bookinfo bookinfo-pvc gold-mcc"
     echo ">>> First argument supplied is presync or migrate"
     echo ">>> Second argument supplied is environment name"
@@ -69,20 +70,22 @@ bin_check() {
 
 # create backup dir with all the manifests
 backup_dir() {
-    echo ">>> Creating the migration dir ${SCRIPT_DIR}/${K8S_ENV}/migrate/${NAMESPACE}/${SOURCEPVC}/${DATE}"
-    mkdir -p ${SCRIPT_DIR}/${K8S_ENV}/migrate/${NAMESPACE}/${SOURCEPVC}/${DATE}
-    cd ${SCRIPT_DIR}/${K8S_ENV}/migrate/${NAMESPACE}/${SOURCEPVC}/${DATE}
+    migrateOrPresync=${1}
+    echo ">>> Creating the migration dir ${SCRIPT_DIR}/${K8S_ENV}/${migrateOrPresync}/${NAMESPACE}/${SOURCEPVC}/${DATE}"
+    mkdir -p ${SCRIPT_DIR}/${K8S_ENV}/${migrateOrPresync}/${NAMESPACE}/${SOURCEPVC}/${DATE}
+    cd ${SCRIPT_DIR}/${K8S_ENV}/${migrateOrPresync}/${NAMESPACE}/${SOURCEPVC}/${DATE}
     ${KUBECTL_BIN} get pvc ${SOURCEPVC} -n ${NAMESPACE} -oyaml | kubectl-neat > ./${SOURCEPVC}-backup.yaml
 }
 
 # create a new pvc with retain policy and immediate in the ns
 create_new_pvc() {
+    migrateOrPresync=${1}
     DESTPVC_PRESENCE=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${DESTPVC} --no-headers=true | awk '{print $1}')
 
     echo ">>> The New Storage class is ${NEWSCNAME}"
 
     if [[ -z ${DESTPVC_PRESENCE} ]]; then
-      cd ${SCRIPT_DIR}/${K8S_ENV}/migrate/${NAMESPACE}/${SOURCEPVC}/${DATE}
+      cd ${SCRIPT_DIR}/${K8S_ENV}/${migrateOrPresync}/${NAMESPACE}/${SOURCEPVC}/${DATE}
       cp ./${SOURCEPVC}-backup.yaml ./${DESTPVC}-backup.yaml
       sed -i -e 's/  name: .*$/  name: '${DESTPVC}'/g' ./${DESTPVC}-backup.yaml
       sed -i -e 's/storageClassName: .*$/storageClassName: '${NEWSCNAME}'/g' ./${DESTPVC}-backup.yaml
@@ -112,11 +115,15 @@ pv_migrate() {
     cat ${SCRIPT_DIR}/templates/values.yaml | sed -e 's#    TOREPLACE#  '"${TOPOLOGY}"'#g' > ${MKVALUETMP}
     case ${MODE} in
       "presync")
-      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s svc --ignore-mounted --helm-values ${MKVALUETMP} || die "SVC PVC migration failed"
+      echo "Starting presync @ $(date)" > ${SCRIPT_DIR}/${K8S_ENV}/presync/${NAMESPACE}/${SOURCEPVC}/${DATE}/presync.log
+      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s svc --ignore-mounted --helm-values ${MKVALUETMP} --source-namespace ${NAMESPACE} --dest-namespace ${NAMESPACE} || die "SVC PVC migration failed"
+      echo "End of presync @ $(date)" >> ${SCRIPT_DIR}/${K8S_ENV}/presync/${NAMESPACE}/${SOURCEPVC}/${DATE}/presync.log
       ;;
 
       "migrate")
-      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s mnt2 --ignore-mounted --helm-values ${MKVALUETMP} || die "MNT2 PVC migration failed"
+      echo "Starting migrate @ $(date)" > ${SCRIPT_DIR}/${K8S_ENV}/migrate/${NAMESPACE}/${SOURCEPVC}/${DATE}/migrate.log
+      ${PV_MIGRATE_BIN} migrate ${SOURCEPVC} ${DESTPVC} -s mnt2 --ignore-mounted --helm-values ${MKVALUETMP} --source-namespace ${NAMESPACE} --dest-namespace ${NAMESPACE} || die "MNT2 PVC migration failed"
+      echo "End of migrate @ $(date)" >> ${SCRIPT_DIR}/${K8S_ENV}/migrate/${NAMESPACE}/${SOURCEPVC}/${DATE}/migrate.log
       ;;
 
       *)
@@ -150,6 +157,9 @@ pv_id() {
 
 # delete the destination pvc
 delete_dest_and_source_pvc() {
+    # fetch old pvc storage and storage class name
+    SOURCESCNAME=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${SOURCEPVC} -ojson | ${JQ_BIN} -r '.spec.storageClassName')
+
     echo ">>> Deleting PVC ${DESTPVC} and ${SOURCEPVC} to clean old resources"
     ${KUBECTL_BIN} delete pvc -n ${NAMESPACE} ${DESTPVC} || die "New PVC deletion Failed" || die "Source PVC deletion failed"
     ${KUBECTL_BIN} delete pvc -n ${NAMESPACE} ${SOURCEPVC} || die "Old PVC deletion Failed" || die "Destination PVC deletion failed"
@@ -157,7 +167,6 @@ delete_dest_and_source_pvc() {
 
 # free the PV Source from PVC
 free_source_pv() {
-    SOURCESCNAME=$(${KUBECTL_BIN} get pvc -n ${NAMESPACE} ${SOURCEPVC} -ojson | ${JQ_BIN} -r '.spec.storageClassName')
     echo ">>> Patching Generated PV ${SOURCEPVID} to be freed from its PVC"
     ${KUBECTL_BIN} patch pv ${SOURCEPVID} --type=json -p='[{"op": "remove", "path": "/spec/claimRef"}]'
     ${KUBECTL_BIN} patch pv ${SOURCEPVID} -p '{"spec":{"storageClassName":"'${DESTPVID}'-backup-'${SOURCESCNAME}'"}}'
@@ -196,18 +205,19 @@ git_push() {
     ${GIT_BIN} push
 }
 
+
 main_presync() {
     bin_check
-    backup_dir
-    create_new_pvc
+    backup_dir presync
+    create_new_pvc presync
     get_pod_location
     pv_migrate
 }
 
 main_migrate() {
     bin_check
-    backup_dir
-    create_new_pvc
+    backup_dir migrate
+    create_new_pvc migrate
     get_pod_location
     pause_scale down
     pv_migrate
