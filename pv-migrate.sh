@@ -108,7 +108,7 @@ get_pod_location() {
 
 # Now we can use the pv-migrate to copy the data
 pv_migrate() {
-    i=$(echo ${PODLIST} | ${JQ_BIN} -r '.nodeName' | uniq)
+    i=$(echo ${PODLIST} | ${JQ_BIN} -r '.nodeName' | head -n 1)
     [[ -z ${i} ]] && die "Unable to determine the nodeName of the Pod"
     TOPOLOGY=$(${KUBECTL_BIN} get no ${i} -ojson | jq -r '.metadata.labels' | grep -we '"topology.kubernetes.io/zone": ".*"' | sed -e 's/,//g')
     MKVALUETMP=$(mktemp)
