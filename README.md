@@ -14,6 +14,7 @@ You need the following commands in your PATH :
 
 * `git`,
 * `kubectl`,
+* `kubectl-neat`,
 * `pv-migrate`,
 * `jq`,
 * and obviously the coreutils (`awk`, `tr`, `mkdir`, `mv`...).
